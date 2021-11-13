@@ -49,6 +49,9 @@ class Atom(Regex):
 	def advance(self):
 		return [(Range(self.char), HAS_MATCH, self)]
 
+	def __eq__(self, other):
+		return True
+
 	def __repr__(self):
 		return f'{self.char}'
 
@@ -60,18 +63,25 @@ class Repeat(Regex):
 		self.min = min
 		self.max = max
 		self.count = count
+		self.dirty = False
 
 	def advance(self):
 		result = []
+		if not self.dirty and self.count == self.min == 0:
+			result.append((None, HAS_MATCH, self.copy()))
 		sub_exprs = self.expr.advance()
 		for path, status, sub_expr in sub_exprs:
 			copy = self.copy()
+			copy.dirty = True
 			copy.expr = sub_expr
 			if status == HAS_MATCH:
 				copy.expr.reset()
 				copy.count += 1
 				if copy.count == self.max:
 					result.append((path, HAS_MATCH, copy))
+					continue
+				if path is None:
+					result.extend(copy.advance())
 					continue
 				elif copy.count >= self.min:
 					result.append((path, HAS_MATCH, copy.copy()))
@@ -80,10 +90,14 @@ class Repeat(Regex):
 
 	def reset(self):
 		self.count = 0
+		self.dirty = False
 		self.expr.reset()
 
 	def copy(self):
 		return Repeat(self.expr, min=self.min, max=self.max, count=self.count)
+
+	def __eq__(self, other):
+		return (self.count == other.count or (self.count >= self.min and self.max == NO_MAX)) and self.expr == other.expr
 
 	def __repr__(self):
 		return f'{self.expr}{{{self.min},{self.count},{self.max}}}'
@@ -106,6 +120,9 @@ class Choice(Regex):
 		for path, status, sub_expr in sub_exprs:
 			copy = self.copy()
 			copy.exprs[i] = sub_expr
+			if path is None:
+				result.extend(copy.advance())
+				continue
 			result.append((path, status, copy))
 		return result
 
@@ -116,6 +133,9 @@ class Choice(Regex):
 
 	def copy(self):
 		return Choice(*self.exprs, cursor=self.cursor)
+
+	def __eq__(self, other):
+		return self.cursor == other.cursor and self.exprs[self.cursor] == other.exprs[other.cursor]
 
 	def __repr__(self):
 		return '('+'|'.join(
@@ -139,8 +159,11 @@ class Sequence(Regex):
 				copy.cursor += 1
 			if copy.cursor == len(self.exprs):
 				result.append((path, HAS_MATCH, copy))
-			else:
-				result.append((path, NOT_MATCH, copy))
+				continue
+			if path is None:
+				result.extend(copy.advance())
+				continue
+			result.append((path, NOT_MATCH, copy))
 		return result
 
 	def reset(self):
@@ -151,6 +174,9 @@ class Sequence(Regex):
 	def copy(self):
 		return Sequence(*self.exprs, cursor=self.cursor)
 
+	def __eq__(self, other):
+		return self.cursor == other.cursor and self.exprs[self.cursor] == other.exprs[other.cursor]
+
 	def __repr__(self):
 		return '('+''.join(
 			f'[{expr}]' if i == self.cursor else
@@ -158,8 +184,12 @@ class Sequence(Regex):
 		)+')'
 
 
-m = Sequence(Repeat(Sequence(Atom("a"), Atom("b")), 1), Atom("a"), Atom("b"))
-
+a = Atom("a")
+b = Atom("b")
+n = 10
+m = Sequence(Repeat(Sequence(a,b),1),a,b)
+m = Sequence(b,Repeat(Repeat(a,0,1),2,2),b)
+m = Sequence(*[Repeat(a,0,1)]*n, *[a]*n)
 
 def compile(graph, state=0):
 	stop = len(graph)
@@ -172,12 +202,16 @@ def compile(graph, state=0):
 			exprs[j][1] = {}
 			sub_exprs = expr.advance()
 			for path, status, sub_expr in sub_exprs:
+				if path is None:
+					exprs.append([sub_expr, status])
+					continue
 				path = path.char_min
 				if path in transitions:
-					graph[transitions[path]].append([sub_expr, status, expr])
+					if all(sub_expr != other for other, *_ in graph[transitions[path]]):
+						graph[transitions[path]].append([sub_expr, status])
 				else:
 					state = len(graph)
-					graph.append([[sub_expr, status, expr]])
+					graph.append([[sub_expr, status]])
 				exprs[j][1][path] = transitions[path] = state
 	for i, state in enumerate(graph):
 		print(i)
