@@ -97,7 +97,7 @@ class Repeat(Regex):
 		return Repeat(self.expr, min=self.min, max=self.max, count=self.count)
 
 	def __eq__(self, other):
-		return (self.count == other.count or (self.count >= self.min and self.max == NO_MAX)) and self.expr == other.expr
+		return (self.count == other.count or (self.count >= self.min and other.count >= other.min and self.max == NO_MAX)) and self.expr == other.expr
 
 	def __repr__(self):
 		return f'{self.expr}{{{self.min},{self.count},{self.max}}}'
@@ -119,10 +119,7 @@ class Choice(Regex):
 		sub_exprs = self.exprs[self.cursor].advance()
 		for path, status, sub_expr in sub_exprs:
 			copy = self.copy()
-			copy.exprs[i] = sub_expr
-			if path is None:
-				result.extend(copy.advance())
-				continue
+			copy.exprs[self.cursor] = sub_expr
 			result.append((path, status, copy))
 		return result
 
@@ -135,7 +132,7 @@ class Choice(Regex):
 		return Choice(*self.exprs, cursor=self.cursor)
 
 	def __eq__(self, other):
-		return self.cursor == other.cursor and self.exprs[self.cursor] == other.exprs[other.cursor]
+		return self.cursor == other.cursor and (self.cursor is None or self.exprs[self.cursor] == other.exprs[other.cursor])
 
 	def __repr__(self):
 		return '('+'|'.join(
@@ -151,6 +148,9 @@ class Sequence(Regex):
 
 	def advance(self):
 		result = []
+		if self.cursor == len(self.exprs):
+			result.append((None, HAS_MATCH, self))
+			return result
 		sub_exprs = self.exprs[self.cursor].advance()
 		for path, status, sub_expr in sub_exprs:
 			copy = self.copy()
@@ -175,7 +175,7 @@ class Sequence(Regex):
 		return Sequence(*self.exprs, cursor=self.cursor)
 
 	def __eq__(self, other):
-		return self.cursor == other.cursor and self.exprs[self.cursor] == other.exprs[other.cursor]
+		return self.cursor == other.cursor and (self.cursor == len(self.exprs) or self.exprs[self.cursor] == other.exprs[other.cursor])
 
 	def __repr__(self):
 		return '('+''.join(
@@ -184,39 +184,111 @@ class Sequence(Regex):
 		)+')'
 
 
-a = Atom("a")
-b = Atom("b")
-n = 10
-m = Sequence(Repeat(Sequence(a,b),1),a,b)
-m = Sequence(b,Repeat(Repeat(a,0,1),2,2),b)
-m = Sequence(*[Repeat(a,0,1)]*n, *[a]*n)
+class Family(Regex):
+	def __init__(self, expr, id):
+		self.id = id
+		self.expr = expr
 
-def compile(graph, state=0):
+	def advance(self):
+		result = []
+		sub_exprs = self.expr.advance()
+		for path, status, sub_expr in sub_exprs:
+			copy = self.copy()
+			copy.expr = sub_expr
+			result.append((path, status, copy))
+		return result
+
+	def copy(self):
+		return Family(self.expr, self.id)
+
+	def __eq__(self, other):
+		return isinstance(other, Family) and self.id == other.id and self.expr == other.expr
+
+	def __repr__(self):
+		return f'{self.expr}->{self.id}'
+
+
+def merge(graph, i, j, replace=False):
+	print("merge", i, j)
+	if replace:
+		graph[j] = graph[i]
+	graph[i] = []
+	for exprs in graph:
+		for expr, transition, *_ in exprs:
+			for key, val in transition.items():
+				if val == i:
+					transition[key] = j
+
+
+def _compile(graph, state=0):
 	stop = len(graph)
 	for i in range(state, stop):
 		exprs = graph[i]
 		transitions = {}
 		for j, (expr, transition, *_) in enumerate(exprs):
-			if transition is not False:
-				continue
-			exprs[j][1] = {}
 			sub_exprs = expr.advance()
 			for path, status, sub_expr in sub_exprs:
 				if path is None:
-					exprs.append([sub_expr, status])
+					transition[path] = -1
 					continue
 				path = path.char_min
 				if path in transitions:
-					if all(sub_expr != other for other, *_ in graph[transitions[path]]):
-						graph[transitions[path]].append([sub_expr, status])
+					state = transitions[path]
+					line = graph[state]
 				else:
 					state = len(graph)
-					graph.append([[sub_expr, status]])
-				exprs[j][1][path] = transitions[path] = state
+					line = []
+					graph.append(line)
+				if all(sub_expr != other for other, *_ in line):
+					if status == HAS_MATCH:
+						line.append([sub_expr, {None:-1}])
+					else:
+						line.append([sub_expr, {}])
+				transition[path] = transitions[path] = state
+
+	state = len(graph)-1
+	for i in range(state, stop-1, -1):
+		for j in range(i):
+			if (all(any(expr == other for other, *_ in graph[j]) for expr, *_ in graph[i]) and
+				all(any(expr == other for other, *_ in graph[i]) for expr, *_ in graph[j])):
+				merge(graph, i, j)
+				merge(graph, state, i, replace=True)
+				state -= 1
+				graph.pop()
+				break
+
 	for i, state in enumerate(graph):
 		print(i)
-		for entry in state:
-			print(entry)
+		for expr, transition, *_ in state:
+			pass
+			print(expr, transition)
 		print()
 	return stop
-graph = [[[m, False]]]
+
+
+def compile(graph):
+	last = None
+	state = 0
+	while state != last:
+		last = state
+		state = _compile(graph, last)
+
+
+def make_graph(*exprs):
+	return [[[Family(expr, i), {}] for i, expr in enumerate(exprs)]]
+
+
+a = Atom("a")
+b = Atom("b")
+n = 30
+m = Repeat(a)
+m = Repeat(Choice(a,b),3)
+m = Sequence(Repeat(Sequence(a,b),1),a,b)
+m = Sequence(b,Repeat(Repeat(a,0,1),2,2),b)
+m = Sequence(*[Repeat(a,0,1)]*n, *[a]*n)
+
+
+graph = make_graph(
+	Repeat(a,1),
+	Sequence(a,b),
+	Repeat(Choice(a,b),1))
