@@ -27,6 +27,21 @@ class Range:
 		return f'"[{self.char_min}-{self.char_max}]"'
 
 
+class Ranges:
+	min_char = 0
+	max_char = 127
+	def __init__(self, *ranges):
+		self.ranges = ranges
+
+	def intersect(self, other):
+		in_self = []
+		in_both = []
+		in_other = []
+		i = 0
+		while True:
+			range_self = self.ranges[i]
+
+
 class Atom(Regex):
 	def __init__(self, char):
 		self.char = char
@@ -55,13 +70,12 @@ class Repeat(Regex):
 			if status == HAS_MATCH:
 				copy.expr.reset()
 				copy.count += 1
-			if copy.count == self.max:
-				result.append((path, HAS_MATCH, copy))
-			elif copy.count >= self.min:
-				result.append((path, HAS_MATCH, copy))
-				result.append((path, NOT_MATCH, copy.copy()))
-			else:
-				result.append((path, NOT_MATCH, copy))
+				if copy.count == self.max:
+					result.append((path, HAS_MATCH, copy))
+					continue
+				elif copy.count >= self.min:
+					result.append((path, HAS_MATCH, copy.copy()))
+			result.append((path, NOT_MATCH, copy))
 		return result
 
 	def reset(self):
@@ -145,3 +159,30 @@ class Sequence(Regex):
 
 
 m = Sequence(Repeat(Sequence(Atom("a"), Atom("b")), 1), Atom("a"), Atom("b"))
+
+
+def compile(graph, state=0):
+	stop = len(graph)
+	for i in range(state, stop):
+		exprs = graph[i]
+		transitions = {}
+		for j, (expr, transition, *_) in enumerate(exprs):
+			if transition is not False:
+				continue
+			exprs[j][1] = {}
+			sub_exprs = expr.advance()
+			for path, status, sub_expr in sub_exprs:
+				path = path.char_min
+				if path in transitions:
+					graph[transitions[path]].append([sub_expr, status, expr])
+				else:
+					state = len(graph)
+					graph.append([[sub_expr, status, expr]])
+				exprs[j][1][path] = transitions[path] = state
+	for i, state in enumerate(graph):
+		print(i)
+		for entry in state:
+			print(entry)
+		print()
+	return stop
+graph = [[[m, False]]]
