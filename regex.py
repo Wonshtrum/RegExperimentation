@@ -45,6 +45,9 @@ class CharSet:
 	def contains(self, char):
 		return any(min_char <= char <= max_char for min_char, max_char in self.ranges)
 
+	def union(self, other):
+		return CharSet(*self.ranges, *other.ranges)
+
 	def intersect(self, other):
 		in_self = []
 		in_both = []
@@ -101,14 +104,25 @@ EPSILON = CharSet()
 
 
 class Atom(Regex):
-	def __init__(self, *ranges):
+	def __init__(self, *ranges, consumed=False):
 		self.char_set = CharSet(*ranges)
+		self.consumed = consumed
 
 	def advance(self):
-		return [(self.char_set, HAS_MATCH, self)]
+		if self.consumed:
+			return [(EPSILON, HAS_MATCH, self)]
+		copy = self.copy()
+		copy.consumed = True
+		return [(self.char_set, HAS_MATCH, copy)]
+
+	def reset(self):
+		self.consumed = False
+
+	def copy(self):
+		return Atom(*self.char_set.ranges, consumed=self.consumed)
 
 	def __eq__(self, other):
-		return True
+		return self.consumed == other.consumed
 
 	def __repr__(self):
 		return f'{self.char_set}'
@@ -256,6 +270,9 @@ class Family(Regex):
 			result.append((path, status, copy))
 		return result
 
+	def reset(self):
+		self.expr.reset()
+
 	def copy(self):
 		return Family(self.expr, self.id)
 
@@ -316,6 +333,19 @@ def _compile(graph, state_id=0):
 				transitions[path] = len(graph)
 				graph.append([{}, [], state])
 
+		unified = {}
+		visited = []
+		for path, state in transitions.items():
+			if state in visited:
+				continue
+			visited.append(state)
+			for other_path, other_state in transitions.items():
+				if state == other_state:
+					path = path.union(other_path)
+			unified[path] = state
+		transitions.clear()
+		transitions.update(unified)
+
 	return stop
 
 
@@ -329,6 +359,7 @@ def compile(graph):
 	t = time()-t
 	print_graph(graph)
 	print(t)
+	return graph
 
 
 def print_graph(graph):
