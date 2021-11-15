@@ -23,6 +23,11 @@ class Regex:
 class CharSet:
 	min_char = 0
 	max_char = 127
+	def __new__(cls, *ranges, **kwargs):
+		if not ranges and EPSILON is not None:
+			return EPSILON
+		return object.__new__(cls)
+
 	def __init__(self, *ranges, inverted=False):
 		ranges = sorted((_, _) if isinstance(_, int) else _ for _ in ranges)
 		self.ranges = []
@@ -36,6 +41,9 @@ class CharSet:
 
 		if inverted:
 			self.ranges = self.star.intersect(self)[0]
+
+	def contains(self, char):
+		return any(min_char <= char <= max_char for min_char, max_char in self.ranges)
 
 	def intersect(self, other):
 		in_self = []
@@ -81,7 +89,7 @@ class CharSet:
 				in_both.append((self_min, self_max))
 				self_min, self_max = get(self.ranges, i)
 				other_min, other_max = get(other.ranges, j)
-		return in_self, in_other, in_both
+		return CharSet(*in_self), CharSet(*in_other), CharSet(*in_both)
 
 	def __repr__(self):
 		if len(self.ranges) == 1 and self.ranges[0][0] == self.ranges[0][1]:
@@ -89,6 +97,7 @@ class CharSet:
 		return '['+','.join(f'{min_char}' if min_char==max_char else f'{min_char}-{max_char}' for min_char, max_char in self.ranges)+']'
 
 CharSet.star = CharSet((CharSet.min_char, CharSet.max_char))
+EPSILON = CharSet()
 
 
 class Atom(Regex):
@@ -267,43 +276,46 @@ def merge(graph, i, j, replace=False):
 				if val == i:
 					transition[key] = j
 
+def add_unique(state, expr):
+	if all(expr != other for other in state):
+		state.append(expr)
+		return state, True
+	return state, False
 
-def _compile(graph, state=0):
+def _compile(graph, state_id=0):
 	stop = len(graph)
-	for i in range(state, stop):
-		exprs = graph[i]
-		transitions = {}
-		for j, (expr, transition, *_) in enumerate(exprs):
+	for i in range(state_id, stop):
+		transitions, accept, exprs = graph[i]
+		for j, expr in enumerate(exprs):
 			sub_exprs = expr.advance()
 			for path, status, sub_expr in sub_exprs:
 				if path is EPSILON:
-					transition[path] = -1
+					add_unique(accept, expr)
 					continue
-				path = path.char_min
-				if path in transitions:
-					state = transitions[path]
-					line = graph[state]
+				for other_path in list(transitions.keys()):
+					other_state = transitions[other_path]
+					path, in_other, in_both = path.intersect(other_path)
+					if in_other is not EPSILON:
+						transitions[in_other] = other_state
+					del transitions[other_path]
+					if in_both is not EPSILON:
+						both_state, _ = add_unique(list(other_state), sub_expr)
+						transitions[in_both] = both_state
+					if path is EPSILON:
+						break
 				else:
-					state = len(graph)
-					line = []
-					graph.append(line)
-				if all(sub_expr != other for other, *_ in line):
-					if status == HAS_MATCH:
-						line.append([sub_expr, {EPSILON:-1}])
-					else:
-						line.append([sub_expr, {}])
-				transition[path] = transitions[path] = state
+					transitions[path] = [sub_expr]
 
-	state = len(graph)-1
-	for i in range(state, stop-1, -1):
-		for j in range(i):
-			if (all(any(expr == other for other, *_ in graph[j]) for expr, *_ in graph[i]) and
-				all(any(expr == other for other, *_ in graph[i]) for expr, *_ in graph[j])):
-				merge(graph, i, j)
-				merge(graph, state, i, replace=True)
-				state -= 1
-				graph.pop()
-				break
+		for path, state in transitions.items():
+			for i, (_, accept, other_state) in enumerate(graph):
+				if (all(any(expr == other for other in other_state) for expr in state) and
+					all(any(expr == other for expr in state) for other in other_state)):
+					transitions[path] = i
+					break
+			else:
+				transitions[path] = len(graph)
+				graph.append([{}, [], state])
+
 	return stop
 
 
@@ -320,28 +332,56 @@ def compile(graph):
 
 
 def print_graph(graph):
-	for i, state in enumerate(graph):
-		print(i)
-		for expr, transition, *_ in state:
-			print(expr, transition)
+	for i, (transitions, accept, state) in enumerate(graph):
+		print("State", i)
+		for expr in state:
+			print("", expr)
+		print("accept:")
+		for expr in accept:
+			print("", expr)
+		print("transitions:")
+		for path, new_state in transitions.items():
+			print("", path, "->", new_state)
 		print()
 
 
 def make_graph(*exprs):
-	return [[[Family(expr, i), {}] for i, expr in enumerate(exprs)]]
+	return [[{}, [], [Family(expr, i) for i, expr in enumerate(exprs)]]]
 
 
-a = Atom(1,2)
+def run(graph, entry):
+	state = graph[0]
+	for i, char in enumerate(entry):
+		for path, state_id in state[0].items():
+			if path.contains(char):
+				state = graph[state_id]
+				break
+		else:
+			print("No match:", "".join(map(str, entry)))
+			print("          "+" "*i+"^")
+			break
+	else:
+		if state[1]:
+			print("Matches:")
+			for expr in state[1]:
+				print("", expr)
+		else:
+			print("No match:", entry)
+
+
+a = Atom(1)
 b = Atom(2)
 n = 30
-m = Repeat(a)
+m = Repeat(a,3)
 m = Repeat(Choice(a,b),3)
 m = Sequence(Repeat(Sequence(a,b),1),a,b)
 m = Sequence(b,Repeat(Repeat(a,0,1),2,2),b)
 m = Sequence(*[Repeat(a,0,1)]*n, *[a]*n)
-
+m = Repeat(a,3)
 
 graph = make_graph(
 	Repeat(a,1),
 	Sequence(a,b),
 	Repeat(Choice(a,b),1))
+
+graph = make_graph(m)
