@@ -125,7 +125,7 @@ class Repeat(Regex):
 
 	def advance(self):
 		result = []
-		if not self.dirty and self.count == self.min == 0:
+		if not self.dirty and self.count >= self.min:
 			result.append((EPSILON, HAS_MATCH, self.copy()))
 		sub_exprs = self.expr.advance()
 		for path, status, sub_expr in sub_exprs:
@@ -345,19 +345,23 @@ def print_graph(graph):
 		print()
 
 
+def print_string(string):
+	return "".join(map(str, string))
+
+
 def make_graph(*exprs):
 	return [[{}, [], [Family(expr, i) for i, expr in enumerate(exprs)]]]
 
 
-def run(graph, entry):
-	state = graph[0]
+def run(graph, entry, state_id=0):
+	state = graph[state_id]
 	for i, char in enumerate(entry):
 		for path, state_id in state[0].items():
 			if path.contains(char):
 				state = graph[state_id]
 				break
 		else:
-			print("No match:", "".join(map(str, entry)))
+			print("No match:", print_string(entry))
 			print("          "+" "*i+"^")
 			break
 	else:
@@ -366,7 +370,38 @@ def run(graph, entry):
 			for expr in state[1]:
 				print("", expr)
 		else:
-			print("No match:", entry)
+			print("No match:", print_string(entry))
+
+
+def run_back(graph, state_id, result=None, visited=None):
+	if visited is None:
+		visited = []
+	if result is None:
+		result = []
+	if state_id == 0:
+		return result[::-1]
+	state = graph[state_id]
+	visited += [state_id]
+	for i, (transitions, _, _) in enumerate(graph):
+		if i in visited:
+			continue
+		for path, j in transitions.items():
+			if j == state_id:
+				found = run_back(graph, i, result+[path], visited)
+				if found:
+					return found
+	else:
+		return False
+
+
+def analyse(graph):
+	for i, (_, accept, _) in enumerate(graph):
+		if len(accept) > 1:
+			print("Ambiguous expressions:")
+			for expr in accept:
+				print("-", expr)
+			print("can all be matched by:", print_string(run_back(graph, i)))
+			print()
 
 
 a = Atom(1)
@@ -377,11 +412,10 @@ m = Repeat(Choice(a,b),3)
 m = Sequence(Repeat(Sequence(a,b),1),a,b)
 m = Sequence(b,Repeat(Repeat(a,0,1),2,2),b)
 m = Sequence(*[Repeat(a,0,1)]*n, *[a]*n)
-m = Repeat(a,3)
 
 graph = make_graph(
 	Repeat(a,1),
 	Sequence(a,b),
 	Repeat(Choice(a,b),1))
 
-graph = make_graph(m)
+#graph = make_graph(m)
