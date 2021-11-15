@@ -20,24 +20,13 @@ class Regex:
 		return self
 
 
-class Range:
-	def __init__(self, char_min, char_max=None):
-		self.char_min = char_min
-		self.char_max = char_min if char_max is None else char_max
-
-	def __repr__(self):
-		if self.char_min == self.char_max:
-			return f'"[{self.char_min}]"'
-		return f'"[{self.char_min}-{self.char_max}]"'
-
-
-class Ranges:
+class CharSet:
 	min_char = 0
 	max_char = 127
 	def __init__(self, *ranges, inverted=False):
 		ranges = sorted((_, _) if isinstance(_, int) else _ for _ in ranges)
 		self.ranges = []
-		last = Ranges.min_char-1
+		last = CharSet.min_char-1
 		for min_char, max_char in ranges:
 			if min_char <= last:
 				min_char, old_max_char = self.ranges.pop()
@@ -54,7 +43,7 @@ class Ranges:
 		in_other = []
 		i = 0
 		j = 0
-		get = lambda l, i: l[i] if i < len(l) else (Ranges.max_char+1, Ranges.max_char+1)
+		get = lambda l, i: l[i] if i < len(l) else (CharSet.max_char+1, CharSet.max_char+1)
 		self_min, self_max = get(self.ranges, i)
 		other_min, other_max = get(other.ranges, j)
 		while i < len(self.ranges) or j < len(other.ranges):
@@ -95,23 +84,25 @@ class Ranges:
 		return in_self, in_other, in_both
 
 	def __repr__(self):
+		if len(self.ranges) == 1 and self.ranges[0][0] == self.ranges[0][1]:
+			return f'{self.ranges[0][0]}'
 		return '['+','.join(f'{min_char}' if min_char==max_char else f'{min_char}-{max_char}' for min_char, max_char in self.ranges)+']'
 
-Ranges.star = Ranges((Ranges.min_char, Ranges.max_char))
+CharSet.star = CharSet((CharSet.min_char, CharSet.max_char))
 
 
 class Atom(Regex):
-	def __init__(self, char):
-		self.char = char
+	def __init__(self, *ranges):
+		self.char_set = CharSet(*ranges)
 
 	def advance(self):
-		return [(Range(self.char), HAS_MATCH, self)]
+		return [(self.char_set, HAS_MATCH, self)]
 
 	def __eq__(self, other):
 		return True
 
 	def __repr__(self):
-		return f'{self.char}'
+		return f'{self.char_set}'
 
 
 NO_MAX = ""
@@ -194,7 +185,7 @@ class Choice(Regex):
 
 	def __repr__(self):
 		return '('+'|'.join(
-			f'[{expr}]' if i == self.cursor else
+			f' {expr} ' if i == self.cursor else
 			f'{expr}' for i, expr in enumerate(self.exprs)
 		)+')'
 
@@ -237,7 +228,7 @@ class Sequence(Regex):
 
 	def __repr__(self):
 		return '('+''.join(
-			f'[{expr}]' if i == self.cursor else
+			f' {expr} ' if i == self.cursor else
 			f'{expr}' for i, expr in enumerate(self.exprs)
 		)+')'
 
@@ -340,8 +331,8 @@ def make_graph(*exprs):
 	return [[[Family(expr, i), {}] for i, expr in enumerate(exprs)]]
 
 
-a = Atom("a")
-b = Atom("b")
+a = Atom(1,2)
+b = Atom(2)
 n = 30
 m = Repeat(a)
 m = Repeat(Choice(a,b),3)
