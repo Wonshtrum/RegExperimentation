@@ -94,6 +94,12 @@ class CharSet:
 				other_min, other_max = get(other.ranges, j)
 		return CharSet(*in_self), CharSet(*in_other), CharSet(*in_both)
 
+	def __hash__(self):
+		return hash(tuple(self.ranges))
+
+	def __eq__(self, other):
+		return self.ranges == other.ranges
+
 	def __repr__(self):
 		if len(self.ranges) == 1 and self.ranges[0][0] == self.ranges[0][1]:
 			return f'{self.ranges[0][0]}'
@@ -109,9 +115,9 @@ class Atom(Regex):
 		self.consumed = consumed
 
 	def advance(self):
-		if self.consumed:
-			return [(EPSILON, HAS_MATCH, self)]
 		copy = self.copy()
+		if self.consumed:
+			return [(EPSILON, HAS_MATCH, copy)]
 		copy.consumed = True
 		return [(self.char_set, HAS_MATCH, copy)]
 
@@ -141,10 +147,11 @@ class Repeat(Regex):
 		result = []
 		if not self.dirty and self.count >= self.min:
 			result.append((EPSILON, HAS_MATCH, self.copy()))
+		if self.count == self.max:
+			return result
 		sub_exprs = self.expr.advance()
 		for path, status, sub_expr in sub_exprs:
 			copy = self.copy()
-			copy.dirty = True
 			copy.expr = sub_expr
 			if status == HAS_MATCH:
 				copy.expr.reset()
@@ -155,8 +162,9 @@ class Repeat(Regex):
 				if path is EPSILON:
 					result.extend(copy.advance())
 					continue
-				elif copy.count >= self.min:
+				if copy.count >= self.min:
 					result.append((path, HAS_MATCH, copy.copy()))
+			copy.dirty = True
 			result.append((path, NOT_MATCH, copy))
 		return result
 
@@ -283,23 +291,29 @@ class Family(Regex):
 		return f'{self.expr}->{self.id}'
 
 
-def merge(graph, i, j, replace=False):
-	if replace:
-		graph[j] = graph[i]
-	graph[i] = []
-	for exprs in graph:
-		for expr, transition, *_ in exprs:
-			for key, val in transition.items():
-				if val == i:
-					transition[key] = j
-
 def add_unique(state, expr):
 	if all(expr != other for other in state):
 		state.append(expr)
 		return state, True
 	return state, False
 
-def _compile(graph, state_id=0):
+
+def unify(transitions):
+	unified = {}
+	visited = []
+	for path, state in transitions.items():
+		if state in visited:
+			continue
+		visited.append(state)
+		for other_path, other_state in transitions.items():
+			if state == other_state:
+				path = path.union(other_path)
+		unified[path] = state
+	transitions.clear()
+	transitions.update(unified)
+
+
+def _compile_graph(graph, state_id=0):
 	stop = len(graph)
 	for i in range(state_id, stop):
 		transitions, accept, exprs = graph[i]
@@ -309,12 +323,11 @@ def _compile(graph, state_id=0):
 				if path is EPSILON:
 					add_unique(accept, expr)
 					continue
-				for other_path in list(transitions.keys()):
-					other_state = transitions[other_path]
+				for other_path, other_state in list(transitions.items()):
 					path, in_other, in_both = path.intersect(other_path)
+					del transitions[other_path]
 					if in_other is not EPSILON:
 						transitions[in_other] = other_state
-					del transitions[other_path]
 					if in_both is not EPSILON:
 						both_state, _ = add_unique(list(other_state), sub_expr)
 						transitions[in_both] = both_state
@@ -333,33 +346,49 @@ def _compile(graph, state_id=0):
 				transitions[path] = len(graph)
 				graph.append([{}, [], state])
 
-		unified = {}
-		visited = []
-		for path, state in transitions.items():
-			if state in visited:
-				continue
-			visited.append(state)
-			for other_path, other_state in transitions.items():
-				if state == other_state:
-					path = path.union(other_path)
-			unified[path] = state
-		transitions.clear()
-		transitions.update(unified)
+		unify(transitions)
 
 	return stop
 
 
-def compile(graph):
+def compile_graph(graph, max_state=None):
 	last = None
 	state = 0
 	t = time()
-	while state != last:
+	while state != last and (max_state is None or state < max_state):
 		last = state
-		state = _compile(graph, last)
+		state = _compile_graph(graph, last)
 	t = time()-t
-	print_graph(graph)
 	print(t)
 	return graph
+
+
+def merge_state(graph, i, j, replace=False):
+	if replace:
+		graph[i] = graph[j]
+	for transitions, _, _ in graph:
+		for path, k in transitions.items():
+			if j == k:
+				transitions[path] = i
+
+
+def aggregate_graph(graph):
+	for i, (transitions, accept, _) in reversed(list(enumerate(graph))):
+		_.clear()
+		for expr in accept:
+			expr.reset()
+		for j, (other_transitions, other_accept, _) in enumerate(graph[i+1:]):
+			j += i+1
+			if (all(any(expr.id == other.id for other in other_accept) for expr in accept) and
+				all(any(expr.id == other.id for expr in accept) for other in other_accept) and
+				all(other_transitions.get(path) == state for path, state in transitions.items()) and
+				all(transitions.get(path) == state for path, state in other_transitions.items())):
+				merge_state(graph, i, j)
+				if j < len(graph)-1:
+					merge_state(graph, len(graph)-1, j, replace=True)
+				del graph[j]
+				unify(_transitions)
+				break
 
 
 def print_graph(graph):
@@ -439,7 +468,8 @@ a = Atom(1)
 b = Atom(2)
 n = 30
 m = Repeat(a,3)
-m = Repeat(Choice(a,b),3)
+m = Repeat(Choice(a,b),0)
+m = Repeat(Sequence(a,Repeat(b,0,0)),0)
 m = Sequence(Repeat(Sequence(a,b),1),a,b)
 m = Sequence(b,Repeat(Repeat(a,0,1),2,2),b)
 m = Sequence(*[Repeat(a,0,1)]*n, *[a]*n)
@@ -450,3 +480,8 @@ graph = make_graph(
 	Repeat(Choice(a,b),1))
 
 #graph = make_graph(m)
+
+compile_graph(graph)
+aggregate_graph(graph)
+print_graph(graph)
+analyse(graph)
