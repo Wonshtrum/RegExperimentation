@@ -40,7 +40,7 @@ class CharSet:
 			last = max_char+1
 
 		if inverted:
-			self.ranges = self.star.intersect(self)[0]
+			self.ranges = self.star.intersect(self)[0].ranges
 
 	def contains(self, char):
 		return any(min_char <= char <= max_char for min_char, max_char in self.ranges)
@@ -110,8 +110,8 @@ EPSILON = CharSet()
 
 
 class Atom(Regex):
-	def __init__(self, *ranges, consumed=False):
-		self.char_set = CharSet(*ranges)
+	def __init__(self, *ranges, inverted=False, consumed=False):
+		self.char_set = CharSet(*ranges, inverted=inverted)
 		self.consumed = consumed
 
 	def advance(self):
@@ -134,8 +134,8 @@ class Atom(Regex):
 		return f'{self.char_set}'
 
 
-NO_MAX = ""
 class Repeat(Regex):
+	NO_MAX = ""
 	def __init__(self, expr, min=0, max=NO_MAX, count=0):
 		self.expr = expr
 		self.min = min
@@ -177,7 +177,7 @@ class Repeat(Regex):
 		return Repeat(self.expr, min=self.min, max=self.max, count=self.count)
 
 	def __eq__(self, other):
-		return (self.count == other.count or (self.count >= self.min and other.count >= other.min and self.max == NO_MAX)) and self.expr == other.expr
+		return (self.count == other.count or (self.count >= self.min and other.count >= other.min and self.max == Repeat.NO_MAX)) and self.expr == other.expr
 
 	def __repr__(self):
 		return f'{self.expr}{{{self.min},{self.count},{self.max}}}'
