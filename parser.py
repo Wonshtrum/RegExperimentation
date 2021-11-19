@@ -2,22 +2,34 @@ from regex import CharSet, Atom, Repeat, Choice, Sequence
 
 
 class ParsingError(Exception):
-	def __init__(self, msg, position):
+	def __init__(self, msg, text, position):
 		super().__init__()
 		self.msg = msg
+		self.text = text
 		self.position = position
 
-	def unquantifiable(position):
-		return ParsingError("Preceding token is not quantifiable", position)
+	def unquantifiable(text, position):
+		return ParsingError("Preceding token is not quantifiable", text, position-1)
 
-	def unexpected(char, position):
-		return ParsingError(f"Unexpected token: {repr(char)}")
+	def unexpected(text, char, position):
+		return ParsingError(f"Unexpected token: {repr(char)}", text, position-1)
+
+	def eof(text, position):
+		return ParsingError("Unexpected end of expression", text, position)
+
+	def __repr__(self):
+		return f"{self.msg}\n{self.text}\n{' '*self.position}^"
+		
+	def __str__(self):
+		return self.__repr__()
 
 
 def parse_choice(text, i):
 	expr, i = parse_expr(text, i, True)
 	exprs = [expr]
 	while True:
+		if i >= len(text):
+			raise ParsingError.eof(text, i)
 		char = text[i]
 		i += 1
 		if char == ")":
@@ -31,6 +43,8 @@ def parse_choice(text, i):
 
 def parse_charset(text, i):
 	inverted = False
+	if i >= len(text):
+		raise ParsingError.eof(text, i)
 	if text[i] == "^":
 		inverted = True
 		i += 1
@@ -51,6 +65,8 @@ def parse_charset(text, i):
 		return char
 
 	while True:
+		if i >= len(text):
+			raise ParsingError.eof(text, i)
 		char = text[i]
 		i += 1
 		if not escaped:
@@ -105,25 +121,25 @@ def parse_sequence(text, i=0, in_choice=False):
 				continue
 			if char == "*":
 				if current is None:
-					raise ParsingError.unquantifiable(i)
+					raise ParsingError.unquantifiable(text, i)
 				result.append(Repeat(current, 0, Repeat.NO_MAX))
 				current = None
 				continue
 			if char == "+":
 				if current is None:
-					raise ParsingError.unquantifiable(i)
+					raise ParsingError.unquantifiable(text, i)
 				result.append(Repeat(current, 1, Repeat.NO_MAX))
 				current = None
 				continue
 			if char == "?":
 				if current is None:
-					raise ParsingError.unquantifiable(i)
+					raise ParsingError.unquantifiable(text, i)
 				result.append(Repeat(current, 0, 1))
 				current = None
 				continue
 			if char == "{":
 				if current is None:
-					raise ParsingError.unquantifiable(i)
+					raise ParsingError.unquantifiable(text, i)
 				min, max, i = parse_repeat(text, i)
 				result.append(Repeat(current, min, max))
 				current = None
@@ -136,7 +152,7 @@ def parse_sequence(text, i=0, in_choice=False):
 				return Sequence(*result), i-1
 		if current is not None:
 			result.append(current)
-		current = char
+		current = Atom(ord(char))
 		escaped = False
 
 
@@ -147,6 +163,8 @@ def parse_repeat(text, i=0):
 	reset = True
 	comma = False
 	while True:
+		if i >= len(text):
+			raise ParsingError.eof(text, i)
 		char = text[i]
 		i += 1
 		if char in "0123456789":
@@ -156,7 +174,7 @@ def parse_repeat(text, i=0):
 			continue
 		if char == ",":
 			if comma:
-				raise ParsingError.unexpected(char, i)
+				raise ParsingError.unexpected(text, char, i)
 			min = num
 			reset = True
 			num = 0
@@ -168,10 +186,12 @@ def parse_repeat(text, i=0):
 			else:
 				min = max = num
 			return min, max, i
-		raise ParsingError.unexpected(char, i)
+		raise ParsingError.unexpected(text, char, i)
 
 
 def parse_expr(text, i=0, in_choice=False):
+	if i >= len(text):
+		raise ParsingError.eof(text, i)
 	char = text[i]
 	if char == "(":
 		return parse_choice(text, i+1)
@@ -181,13 +201,7 @@ def parse_expr(text, i=0, in_choice=False):
 
 
 def parse_regex(text):
-	try:
-		expr, i = parse_sequence(text)
-		if i < len(text):
-			raise ParsingError.unexpected(text[i], i)
-		return expr
-	except ParsingError as error:
-		print(error.msg)
-		print(text)
-		print(" "*(error.position-1)+"^")
-		return None
+	expr, i = parse_sequence(text)
+	if i < len(text):
+		raise ParsingError.unexpected(text, text[i], i)
+	return expr
