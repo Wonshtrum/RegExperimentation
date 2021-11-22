@@ -1,4 +1,4 @@
-from regex import make_graph, compile_graph, aggregate_graph, print_graph, analyse_graph, run, run_back, to_string, to_ascii
+from regex import RegexGraph, to_string, to_ascii
 from parser import parse_regex
 
 
@@ -11,22 +11,22 @@ r = parse_regex("b(a?){2}b")		#Sequence(b,Repeat(Repeat(a,0,1),2,2),b)
 r = parse_regex("ba{,2}b")			#Sequence(b,Repeat(a,0,2),b)
 r = parse_regex("a?"*n+"a"*n)		#Sequence(*[Repeat(a,0,1)]*n, *[a]*n)
 
-graph = make_graph(
+graph = RegexGraph(
 	parse_regex("b(a?){2}b"),
 	parse_regex("ba{,2}b"))
 
-graph = make_graph(
+graph = RegexGraph(
 	parse_regex("a+"),
 	parse_regex("ab"),
 	parse_regex("(a|b)+"))
 
-#graph = make_graph(r)
+#graph = RegexGraph(r)
 
-compile_graph(graph)
+graph.compile()
 input()
-print_graph(graph)
+print(graph)
 input()
-aggregate_graph(graph)
-print_graph(graph)
+graph.aggregate()
+print(graph)
 input()
-analyse_graph(graph)
+graph.analyse()

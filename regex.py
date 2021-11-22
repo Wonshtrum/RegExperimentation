@@ -6,10 +6,6 @@ HAS_MATCH = True
 EPSILON = None
 
 
-def append(elements, element):
-	elements.append(element)
-	return elements
-
 
 class Regex:
 	def advance(self):
@@ -106,12 +102,23 @@ class CharSet:
 		return self.ranges == other.ranges
 
 	def __repr__(self):
+		if len(self.ranges) == 0:
+			return "ε"
 		if len(self.ranges) == 1 and self.ranges[0][0] == self.ranges[0][1]:
-			return f'{self.ranges[0][0]}'
-		return '['+','.join(f'{min_char}' if min_char==max_char else f'{min_char}-{max_char}' for min_char, max_char in self.ranges)+']'
+			return f"{self.ranges[0][0]}"
+		return "["+",".join(f"{min_char}" if min_char==max_char else f"{min_char}-{max_char}" for min_char, max_char in self.ranges)+"]"
+
 
 CharSet.star = CharSet((CharSet.min_char, CharSet.max_char))
 EPSILON = CharSet()
+
+
+def to_string(entry):
+	return "".join(_.get_one() if isinstance(_, CharSet) else chr(_) for _ in entry)
+
+
+def to_ascii(entry):
+	return list(map(ord, entry))
 
 
 class Atom(Regex):
@@ -136,7 +143,7 @@ class Atom(Regex):
 		return self.consumed == other.consumed
 
 	def __repr__(self):
-		return f'{self.char_set}'
+		return f"{self.char_set}"
 
 
 class Repeat(Regex):
@@ -185,7 +192,7 @@ class Repeat(Regex):
 		return (self.count == other.count or (self.count >= self.min and other.count >= other.min and self.max == Repeat.NO_MAX)) and self.expr == other.expr
 
 	def __repr__(self):
-		return f'{self.expr}{{{self.min},{self.count},{self.max}}}'
+		return f"{self.expr}{{{self.min},{self.count},{self.max}}}"
 
 
 class Choice(Regex):
@@ -220,10 +227,10 @@ class Choice(Regex):
 		return self.cursor == other.cursor and (self.cursor is None or self.exprs[self.cursor] == other.exprs[other.cursor])
 
 	def __repr__(self):
-		return '('+'|'.join(
-			f' >{expr}< ' if i == self.cursor else
-			f'{expr}' for i, expr in enumerate(self.exprs)
-		)+')'
+		return "("+"|".join(
+			f" >{expr}< " if i == self.cursor else
+			f"{expr}" for i, expr in enumerate(self.exprs)
+		)+")"
 
 
 class Sequence(Regex):
@@ -263,10 +270,10 @@ class Sequence(Regex):
 		return self.cursor == other.cursor and (self.cursor == len(self.exprs) or self.exprs[self.cursor] == other.exprs[other.cursor])
 
 	def __repr__(self):
-		return '('+''.join(
-			f' >{expr}< ' if i == self.cursor else
-			f'{expr}' for i, expr in enumerate(self.exprs)
-		)+')'
+		return "("+"".join(
+			f" >{expr}< " if i == self.cursor else
+			f"{expr}" for i, expr in enumerate(self.exprs)
+		)+")"
 
 
 class Family(Regex):
@@ -293,7 +300,7 @@ class Family(Regex):
 		return isinstance(other, Family) and self.id == other.id and self.expr == other.expr
 
 	def __repr__(self):
-		return f'{self.expr}->{self.id}'
+		return f"{self.expr}->{self.id}"
 
 
 def add_unique(state, expr):
@@ -321,165 +328,141 @@ def unify(transitions):
 	return change
 
 
-def _compile_graph(graph, state_id=0):
-	stop = len(graph)
-	for i in range(state_id, stop):
-		transitions, accept, exprs = graph[i]
-		for j, expr in enumerate(exprs):
-			sub_exprs = expr.advance()
-			for path, status, sub_expr in sub_exprs:
-				if path is EPSILON:
-					add_unique(accept, expr)
-					continue
-				for other_path, other_state in list(transitions.items()):
-					path, in_other, in_both = path.intersect(other_path)
-					del transitions[other_path]
-					if in_other is not EPSILON:
-						transitions[in_other] = other_state
-					if in_both is not EPSILON:
-						both_state, _ = add_unique(list(other_state), sub_expr)
-						transitions[in_both] = both_state
-					if path is EPSILON:
-						break
-				else:
-					transitions[path] = [sub_expr]
+class RegexGraph(list):
+	def __init__(self, *exprs):
+		super().__init__([[{}, [], [Family(expr, i) for i, expr in enumerate(exprs)]]])
 
-		for path, state in transitions.items():
-			for i, (_, accept, other_state) in enumerate(graph):
-				if (all(any(expr == other for other in other_state) for expr in state) and
-					all(any(expr == other for expr in state) for other in other_state)):
-					transitions[path] = i
+	def run(self, entry, state_id=0):
+		state = self[state_id]
+		for i, char in enumerate(entry):
+			for path, state_id in state[0].items():
+				if path.contains(char):
+					state = self[state_id]
 					break
 			else:
-				transitions[path] = len(graph)
-				graph.append([{}, [], state])
-
-		unify(transitions)
-
-	return stop
-
-
-def compile_graph(graph, max_state=None):
-	last = None
-	state = 0
-	t = time()
-	while state != last and (max_state is None or state < max_state):
-		last = state
-		state = _compile_graph(graph, last)
-	t = time()-t
-	print(t)
-	return graph
-
-
-def merge_state(graph, i, j, replace=False):
-	if replace:
-		graph[i] = graph[j]
-	for transitions, _, _ in graph:
-		for path, k in transitions.items():
-			if j == k:
-				transitions[path] = i
-
-
-def aggregate_graph(graph):
-	for transitions, accept, _ in graph:
-		_.clear()
-		for i, expr in reversed(list(enumerate(accept))):
-			expr.reset()
-			if any(expr.id == other.id for other in accept[i+1:]):
-				del accept[i]
-
-	change = True
-	while change:
-		print("aggregating")
-		change = False
-		for i, (transitions, accept, _) in reversed(list(enumerate(graph))):
-			change = unify(transitions) or change
-			for j, (other_transitions, other_accept, _) in enumerate(graph[i+1:]):
-				j += i+1
-				if (all(any(expr.id == other.id for other in other_accept) for expr in accept) and
-					all(any(expr.id == other.id for expr in accept) for other in other_accept) and
-					all(other_transitions.get(path) == state for path, state in transitions.items()) and
-					all(transitions.get(path) == state for path, state in other_transitions.items())):
-					change = True
-					merge_state(graph, i, j)
-					if j < len(graph)-1:
-						merge_state(graph, len(graph)-1, j, replace=True)
-					del graph[j]
-					break
-
-
-def print_graph(graph):
-	for i, (transitions, accept, state) in enumerate(graph):
-		print("State", i)
-		for expr in state:
-			print("", expr)
-		print("accept:")
-		for expr in accept:
-			print("", expr)
-		print("transitions:")
-		for path, new_state in transitions.items():
-			print("", path, "->", new_state)
-		print()
-
-
-def to_string(entry):
-	return "".join(_.get_one() if isinstance(_, CharSet) else chr(_) for _ in entry)
-
-
-def to_ascii(entry):
-	return list(map(ord, entry))
-
-
-def make_graph(*exprs):
-	return [[{}, [], [Family(expr, i) for i, expr in enumerate(exprs)]]]
-
-
-def run(graph, entry, state_id=0):
-	state = graph[state_id]
-	for i, char in enumerate(entry):
-		for path, state_id in state[0].items():
-			if path.contains(char):
-				state = graph[state_id]
+				print("No match:", to_string(entry))
+				print("          "+" "*i+"^")
 				break
 		else:
-			print("No match:", to_string(entry))
-			print("          "+" "*i+"^")
-			break
-	else:
-		if state[1]:
-			print("Matches:")
-			for expr in state[1]:
-				print("", expr)
+			if state[1]:
+				print("Matches:")
+				for expr in state[1]:
+					print("", expr)
+			else:
+				print("No match:", to_string(entry))
+
+	def run_back(self, state_id, result=None, visited=None):
+		if visited is None:
+			visited = []
+		if result is None:
+			result = []
+		if state_id == 0:
+			return result[::-1]
+		state = self[state_id]
+		visited += [state_id]
+		for i, (transitions, _, _) in enumerate(self):
+			if i in visited:
+				continue
+			for path, j in transitions.items():
+				if j == state_id:
+					found = self.run_back(i, result+[path], visited)
+					if found:
+						return found
 		else:
-			print("No match:", to_string(entry))
+			return False
 
+	def _compile(self, state_id=0):
+		stop = len(self)
+		for i in range(state_id, stop):
+			transitions, accept, exprs = self[i]
+			for j, expr in enumerate(exprs):
+				sub_exprs = expr.advance()
+				for path, status, sub_expr in sub_exprs:
+					if path is EPSILON:
+						add_unique(accept, expr)
+						continue
+					for other_path, other_state in list(transitions.items()):
+						path, in_other, in_both = path.intersect(other_path)
+						del transitions[other_path]
+						if in_other is not EPSILON:
+							transitions[in_other] = other_state
+						if in_both is not EPSILON:
+							both_state, _ = add_unique(list(other_state), sub_expr)
+							transitions[in_both] = both_state
+						if path is EPSILON:
+							break
+					else:
+						transitions[path] = [sub_expr]
+			for path, state in transitions.items():
+				for i, (_, accept, other_state) in enumerate(self):
+					if (all(any(expr == other for other in other_state) for expr in state) and
+						all(any(expr == other for expr in state) for other in other_state)):
+						transitions[path] = i
+						break
+				else:
+					transitions[path] = len(self)
+					self.append([{}, [], state])
+			unify(transitions)
+		return stop
 
-def run_back(graph, state_id, result=None, visited=None):
-	if visited is None:
-		visited = []
-	if result is None:
-		result = []
-	if state_id == 0:
-		return result[::-1]
-	state = graph[state_id]
-	visited += [state_id]
-	for i, (transitions, _, _) in enumerate(graph):
-		if i in visited:
-			continue
-		for path, j in transitions.items():
-			if j == state_id:
-				found = run_back(graph, i, result+[path], visited)
-				if found:
-					return found
-	else:
-		return False
+	def compile(self, max_state=None):
+		last = None
+		state = 0
+		t = time()
+		while state != last and (max_state is None or state < max_state):
+			last = state
+			state = self._compile(last)
+		t = time()-t
+		print(t)
+		return self
 
+	def merge_state(self, i, j, replace=False):
+		if replace:
+			self[i] = self[j]
+		for transitions, _, _ in self:
+			for path, k in transitions.items():
+				if j == k:
+					transitions[path] = i
 
-def analyse_graph(graph):
-	for i, (_, accept, _) in enumerate(graph):
-		if len(accept) > 1:
-			print("Ambiguous expressions:")
-			for expr in accept:
-				print("-", expr)
-			print("can all be matched by:", to_string(run_back(graph, i)))
-			print()
+	def aggregate(self):
+		for transitions, accept, _ in self:
+			_.clear()
+			for i, expr in reversed(list(enumerate(accept))):
+				expr.reset()
+				if any(expr.id == other.id for other in accept[i+1:]):
+					del accept[i]
+		change = True
+		while change:
+			change = False
+			for i, (transitions, accept, _) in reversed(list(enumerate(self))):
+				change = unify(transitions) or change
+				for j, (other_transitions, other_accept, _) in enumerate(self[i+1:]):
+					j += i+1
+					if (all(any(expr.id == other.id for other in other_accept) for expr in accept) and
+						all(any(expr.id == other.id for expr in accept) for other in other_accept) and
+						all(other_transitions.get(path) == state for path, state in transitions.items()) and
+						all(transitions.get(path) == state for path, state in other_transitions.items())):
+						change = True
+						self.merge_state(i, j)
+						if j < len(self)-1:
+							self.merge_state(len(self)-1, j, replace=True)
+						del self[j]
+						break
+
+	def analyse(self):
+		for i, (_, accept, _) in enumerate(self):
+			if len(accept) > 1:
+				print("Ambiguous expressions:")
+				for expr in accept:
+					print("-", expr)
+				print("can all be matched by:", to_string(self.run_back(i)))
+				print()
+
+	def __repr__(self):
+		result = ""
+		for i, (transitions, accept, state) in enumerate(self):
+			result += f"State {i}\n"+"".join(f" {expr}\n" for expr in state)
+			result += "accept:\n"+"".join(f" {expr}\n" for expr in accept)
+			result += "transitions:\n"+"".join(f" {path} -> {new_state}\n" for path, new_state in transitions.items())
+			result += "\n"
+		return result
