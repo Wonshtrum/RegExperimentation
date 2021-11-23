@@ -105,8 +105,8 @@ class CharSet:
 		if len(self.ranges) == 0:
 			return "ε"
 		if len(self.ranges) == 1 and self.ranges[0][0] == self.ranges[0][1]:
-			return f"{self.ranges[0][0]}"
-		return "["+",".join(f"{min_char}" if min_char==max_char else f"{min_char}-{max_char}" for min_char, max_char in self.ranges)+"]"
+			return f"{chr(self.ranges[0][0])}"
+		return "["+"".join(f"{chr(min_char)}" if min_char==max_char else f"{chr(min_char)}-{chr(max_char)}" for min_char, max_char in self.ranges)+"]"
 
 
 CharSet.star = CharSet((CharSet.min_char, CharSet.max_char))
@@ -328,10 +328,43 @@ def unify(transitions):
 	return change
 
 
+class RegexMatch:
+	def __init__(self, entry, length, families):
+		self.entry = entry
+		self.length = length
+		self.families = families
+
+	def __repr__(self):
+		return f" {to_string(self.entry)}\n{' '*(self.length>0)}{'~'*(self.length-1)}^\n"+"".join(map(str, self.families))
+
+
 class RegexGraph(list):
 	def __init__(self, *exprs):
 		super().__init__([[{}, [], [Family(expr, i) for i, expr in enumerate(exprs)]]])
 
+	i = -1
+	def match(self, entry, state_id=0, shortest=False):
+		state = self[state_id]
+		current = None
+		i = 0
+		for i, char in enumerate(entry):
+			if state[1]:
+				print("there")
+				current = RegexMatch(entry, i, state[1])
+				if shortest:
+					return current
+			for path, state_id in state[0].items():
+				if path.contains(char):
+					state = self[state_id]
+					break
+			else:
+				return current
+		else:
+			if state[1]:
+				print("here")
+				return RegexMatch(entry, i+1, state[1])
+			return current
+		
 	def run(self, entry, state_id=0):
 		state = self[state_id]
 		for i, char in enumerate(entry):
@@ -445,7 +478,7 @@ class RegexGraph(list):
 						change = True
 						self.merge_state(i, j)
 						if j < len(self)-1:
-							self.merge_state(len(self)-1, j, replace=True)
+							self.merge_state(j, len(self)-1, replace=True)
 						del self[j]
 						break
 

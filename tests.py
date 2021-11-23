@@ -10,6 +10,7 @@ r = parse_regex("(ab)+ab")			#Sequence(Repeat(Sequence(a,b),1),a,b)
 r = parse_regex("b(a?){2}b")		#Sequence(b,Repeat(Repeat(a,0,1),2,2),b)
 r = parse_regex("ba{,2}b")			#Sequence(b,Repeat(a,0,2),b)
 r = parse_regex("a?"*n+"a"*n)		#Sequence(*[Repeat(a,0,1)]*n, *[a]*n)
+r = parse_regex("[abc]*ab")			#Sequence(Repeat(Choice(a,b,c),0),a,b)
 
 graph = RegexGraph(
 	parse_regex("b(a?){2}b"),
