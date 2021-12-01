@@ -14,7 +14,7 @@ This algorithm:
  - doesn't deal with epsilon properly
 
 ## Complexity
-This project was started thinking that it would fail, few reflections were put in place to optimize it and its complexity was not thouroughly examined. However, it seems like the run time for building an automata is superlinear and matching a string is stricly linear.
+This project was started thinking that it would fail, little thought was put into optimizing it. However, it appears that the execution time to build an automaton is superlinear and the string matching is strictly linear.
 
 ## Example
 Here is a simple exemple of an automata that matches `if`, `else`, `elif` and variable names (`[_a-zA-Z][_a-zA-Z0-9]*`):
@@ -26,7 +26,7 @@ graph = RegexGraph(
 	parse_regex("else"),
 	parse_regex("[_a-zA-Z][_a-zA-Z0-9]*"))
 
-graph.compile()
+graph.compile()		# create a first automata
 graph.aggregate()	# simplifies the automata as much as possible
 
 m1 = graph.match(to_ascii("if (true) {}"))
@@ -36,7 +36,7 @@ m4 = graph.match(to_ascii("42")
 ```
 
 Results:
-```py
+```
 >>> print(m1)
  if (true) {}
  ~^
@@ -61,8 +61,8 @@ matches:
 None
 ```
 
-As expected `[_a-zA-Z][_a-zA-Z0-9]*` matches the other 3 regular expressions. The RegexGraph object can automatically repport such ambiguity:
-```py
+As expected `[_a-zA-Z][_a-zA-Z0-9]*` matches the other 3 regular expressions. The RegexGraph object can automatically report such ambiguity:
+```
 >>> graph.analyse()
 Ambiguous expressions:
  - if
@@ -72,7 +72,7 @@ can all be matched by: if
 Ambiguous expressions:
  - else
  - [_a-zA-Z][_a-zA-Z0-9]*
-can all be matched by: else
+can all be matched by: elsesection
 
 Ambiguous expressions:
  - elif
