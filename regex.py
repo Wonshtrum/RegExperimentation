@@ -146,6 +146,9 @@ class Atom(Regex):
 		return f"{self.char_set}"
 
 
+Atom.wildcard = Atom((CharSet.min_char, CharSet.max_char))
+
+
 class Repeat(Regex):
 	NO_MAX = ""
 	def __init__(self, expr, min=0, max=NO_MAX, count=0):
@@ -335,7 +338,7 @@ class RegexMatch:
 		self.families = families
 
 	def __repr__(self):
-		return f" {to_string(self.entry)}\n{' '*(self.length>0)}{'~'*(self.length-1)}^\n"+"".join(map(str, self.families))
+		return f" {to_string(self.entry)}\n{' '*(self.length>0)}{'~'*(self.length-1)}^\n"+"\n".join(map(str, self.families))
 
 
 class RegexGraph(list):
@@ -349,7 +352,6 @@ class RegexGraph(list):
 		i = 0
 		for i, char in enumerate(entry):
 			if state[1]:
-				print("there")
 				current = RegexMatch(entry, i, state[1])
 				if shortest:
 					return current
@@ -361,7 +363,6 @@ class RegexGraph(list):
 				return current
 		else:
 			if state[1]:
-				print("here")
 				return RegexMatch(entry, i+1, state[1])
 			return current
 		
@@ -479,7 +480,7 @@ class RegexGraph(list):
 						self.merge_state(i, j)
 						if j < len(self)-1:
 							self.merge_state(j, len(self)-1, replace=True)
-						del self[j]
+						self.pop()
 						break
 
 	def analyse(self):

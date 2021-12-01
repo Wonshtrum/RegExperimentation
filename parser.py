@@ -107,7 +107,7 @@ def parse_sequence(text, i=0, in_choice=False):
 			if char == ".":
 				if current is not None:
 					result.append(current)
-				current = [True]
+				current = Atom.wildcard
 				continue
 			if char == "[":
 				if current is not None:
