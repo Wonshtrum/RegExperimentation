@@ -72,7 +72,7 @@ can all be matched by: if
 Ambiguous expressions:
  - else
  - [_a-zA-Z][_a-zA-Z0-9]*
-can all be matched by: elsesection
+can all be matched by: else
 
 Ambiguous expressions:
  - elif
