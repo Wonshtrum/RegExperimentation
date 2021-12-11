@@ -132,6 +132,9 @@ def parse_sequence(text, i=0, in_choice=False):
 				current = None
 				continue
 			if char == "?":
+				if result and isinstance(result[-1], Repeat) and result[-1].greedy:
+					result[-1].greedy = False
+					continue
 				if current is None:
 					raise ParsingError.unquantifiable(text, i)
 				result.append(Repeat(current, 0, 1))

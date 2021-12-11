@@ -21,7 +21,16 @@ graph = RegexGraph(
 	parse_regex("ab"),
 	parse_regex("(a|b)+"))
 
-#graph = RegexGraph(r)
+graph = RegexGraph(
+	parse_regex("[a-zA-Z_][a-zA-Z0-9_]*"),
+	parse_regex(r'"(\\.|[^"\\])*"'),
+	parse_regex("[0-9]+"),
+	parse_regex("[ \t\r\n]+"),
+	parse_regex("//.*?(\n|$)"),
+	parse_regex("/\*.*?\*/"),
+)
+
+graph = RegexGraph(parse_regex("a*?a"))
 
 graph.compile()
 input()

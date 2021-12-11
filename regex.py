@@ -8,7 +8,7 @@ EPSILON = None
 
 
 class Regex:
-	def advance(self):
+	def advance(self, can_end):
 		return []
 	def reset(self):
 		pass
@@ -126,7 +126,7 @@ class Atom(Regex):
 		self.char_set = CharSet(*ranges, inverted=inverted)
 		self.consumed = consumed
 
-	def advance(self):
+	def advance(self, can_end):
 		copy = self.copy()
 		if self.consumed:
 			return [(EPSILON, HAS_MATCH, copy)]
@@ -151,20 +151,23 @@ Atom.wildcard = Atom((CharSet.min_char, CharSet.max_char))
 
 class Repeat(Regex):
 	NO_MAX = ""
-	def __init__(self, expr, min=0, max=NO_MAX, count=0):
+	def __init__(self, expr, min=0, max=NO_MAX, count=0, greedy=True):
 		self.expr = expr
 		self.min = min
 		self.max = max
 		self.count = count
 		self.dirty = False
+		self.greedy = greedy
 
-	def advance(self):
+	def advance(self, can_end):
+		if can_end and not self.greedy:
+			return [(EPSILON, HAS_MATCH, self.copy())]
 		result = []
 		if not self.dirty and self.count >= self.min:
 			result.append((EPSILON, HAS_MATCH, self.copy()))
 		if self.count == self.max:
 			return result
-		sub_exprs = self.expr.advance()
+		sub_exprs = self.expr.advance(can_end)
 		for path, status, sub_expr in sub_exprs:
 			copy = self.copy()
 			copy.expr = sub_expr
@@ -175,7 +178,7 @@ class Repeat(Regex):
 					result.append((path, HAS_MATCH, copy))
 					continue
 				if path is EPSILON:
-					result.extend(copy.advance())
+					result.extend(copy.advance(can_end))
 					continue
 				if copy.count >= self.min:
 					result.append((path, HAS_MATCH, copy.copy()))
@@ -189,13 +192,13 @@ class Repeat(Regex):
 		self.expr.reset()
 
 	def copy(self):
-		return Repeat(self.expr, min=self.min, max=self.max, count=self.count)
+		return Repeat(self.expr, min=self.min, max=self.max, count=self.count, greedy=self.greedy)
 
 	def __eq__(self, other):
 		return (self.count == other.count or (self.count >= self.min and other.count >= other.min and self.max == Repeat.NO_MAX)) and self.expr == other.expr
 
 	def __repr__(self):
-		return f"{self.expr}{{{self.min},{self.count},{self.max}}}"
+		return f"{self.expr}{{{self.min},{self.count},{self.max}}}"+"?"*(not self.greedy)
 
 
 class Choice(Regex):
@@ -203,15 +206,15 @@ class Choice(Regex):
 		self.exprs = list(exprs)
 		self.cursor = cursor
 
-	def advance(self):
+	def advance(self, can_end):
 		result = []
 		if self.cursor is None:
 			copy = self.copy()
 			for i, expr in enumerate(self.exprs):
 				copy.cursor = i
-				result.extend(copy.advance())
+				result.extend(copy.advance(can_end))
 			return result
-		sub_exprs = self.exprs[self.cursor].advance()
+		sub_exprs = self.exprs[self.cursor].advance(can_end)
 		for path, status, sub_expr in sub_exprs:
 			copy = self.copy()
 			copy.exprs[self.cursor] = sub_expr
@@ -241,12 +244,12 @@ class Sequence(Regex):
 		self.exprs = list(exprs)
 		self.cursor = cursor
 
-	def advance(self):
+	def advance(self, can_end):
 		result = []
 		if self.cursor == len(self.exprs):
 			result.append((EPSILON, HAS_MATCH, self))
 			return result
-		sub_exprs = self.exprs[self.cursor].advance()
+		sub_exprs = self.exprs[self.cursor].advance(can_end)
 		for path, status, sub_expr in sub_exprs:
 			copy = self.copy()
 			copy.exprs[self.cursor] = sub_expr
@@ -256,7 +259,7 @@ class Sequence(Regex):
 				result.append((path, HAS_MATCH, copy))
 				continue
 			if path is EPSILON:
-				result.extend(copy.advance())
+				result.extend(copy.advance(can_end))
 				continue
 			result.append((path, NOT_MATCH, copy))
 		return result
@@ -284,9 +287,9 @@ class Family(Regex):
 		self.id = id
 		self.expr = expr
 
-	def advance(self):
+	def advance(self, can_end):
 		result = []
-		sub_exprs = self.expr.advance()
+		sub_exprs = self.expr.advance(can_end)
 		for path, status, sub_expr in sub_exprs:
 			copy = self.copy()
 			copy.expr = sub_expr
@@ -341,35 +344,45 @@ class RegexMatch:
 		return f" {to_string(self.entry)}\n{' '*(self.length>0)}{'~'*(self.length-1)}^\n"+"\n".join(map(str, self.families))
 
 
+class RegexState:
+	def __init__(self, exprs=None, transitions=None, accept=None):
+		self.transitions = transitions or {}
+		self.accept = accept or []
+		self.exprs = exprs or []
+
+	def __iter__(self):
+		yield self.transitions
+		yield self.accept
+		yield self.exprs
+
+
 class RegexGraph(list):
 	def __init__(self, *exprs):
-		super().__init__([[{}, [], [Family(expr, i) for i, expr in enumerate(exprs)]]])
+		super().__init__([RegexState([Family(expr, i) for i, expr in enumerate(exprs)])])
 
 	i = -1
-	def match(self, entry, state_id=0, shortest=False):
+	def match(self, entry, state_id=0):
 		state = self[state_id]
 		current = None
 		i = 0
 		for i, char in enumerate(entry):
-			if state[1]:
-				current = RegexMatch(entry, i, state[1])
-				if shortest:
-					return current
-			for path, state_id in state[0].items():
+			if state.accept:
+				current = RegexMatch(entry, i, state.accept)
+			for path, state_id in state.transitions.items():
 				if path.contains(char):
 					state = self[state_id]
 					break
 			else:
 				return current
 		else:
-			if state[1]:
-				return RegexMatch(entry, i+1, state[1])
+			if state.accept:
+				return RegexMatch(entry, i+1, state.accept)
 			return current
 		
 	def run(self, entry, state_id=0):
 		state = self[state_id]
 		for i, char in enumerate(entry):
-			for path, state_id in state[0].items():
+			for path, state_id in state.transitions.items():
 				if path.contains(char):
 					state = self[state_id]
 					break
@@ -378,9 +391,9 @@ class RegexGraph(list):
 				print("          "+" "*i+"^")
 				break
 		else:
-			if state[1]:
+			if state.accept:
 				print("Matches:")
-				for expr in state[1]:
+				for expr in state.accept:
 					print("", expr)
 			else:
 				print("No match:", to_string(entry))
@@ -409,8 +422,16 @@ class RegexGraph(list):
 		stop = len(self)
 		for i in range(state_id, stop):
 			transitions, accept, exprs = self[i]
+			can_end = False
+			for expr in exprs:
+				for path, _, _ in expr.advance(False):
+					if path is EPSILON:
+						can_end = True
+						break
+				if can_end:
+					break
 			for j, expr in enumerate(exprs):
-				sub_exprs = expr.advance()
+				sub_exprs = expr.advance(can_end)
 				for path, status, sub_expr in sub_exprs:
 					if path is EPSILON:
 						add_unique(accept, expr)
@@ -428,14 +449,14 @@ class RegexGraph(list):
 					else:
 						transitions[path] = [sub_expr]
 			for path, state in transitions.items():
-				for i, (_, accept, other_state) in enumerate(self):
+				for j, (_, accept, other_state) in enumerate(self):
 					if (all(any(expr == other for other in other_state) for expr in state) and
 						all(any(expr == other for expr in state) for other in other_state)):
-						transitions[path] = i
+						transitions[path] = j
 						break
 				else:
 					transitions[path] = len(self)
-					self.append([{}, [], state])
+					self.append(RegexState(state))
 			unify(transitions)
 		return stop
 
@@ -494,8 +515,8 @@ class RegexGraph(list):
 
 	def __repr__(self):
 		result = ""
-		for i, (transitions, accept, state) in enumerate(self):
-			result += f"State {i}\n"+"".join(f" {expr}\n" for expr in state)
+		for i, (transitions, accept, exprs) in enumerate(self):
+			result += f"State {i}\n"+"".join(f" {expr}\n" for expr in exprs)
 			result += "accept:\n"+"".join(f" {expr}\n" for expr in accept)
 			result += "transitions:\n"+"".join(f" {path} -> {new_state}\n" for path, new_state in transitions.items())
 			result += "\n"
