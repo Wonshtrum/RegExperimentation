@@ -25,7 +25,7 @@ class ParsingError(Exception):
 
 
 def parse_choice(text, i):
-	expr, i = parse_expr(text, i, True)
+	expr, i = parse_sequence(text, i, True)
 	exprs = [expr]
 	while True:
 		if i >= len(text):
@@ -37,7 +37,7 @@ def parse_choice(text, i):
 				return expr, i
 			return Choice(*exprs), i
 		if char == "|":
-			expr, i = parse_expr(text, i, True)
+			expr, i = parse_sequence(text, i, True)
 			exprs.append(expr)
 
 
@@ -190,17 +190,6 @@ def parse_repeat(text, i=0):
 				min = max = num
 			return min, max, i
 		raise ParsingError.unexpected(text, char, i)
-
-
-def parse_expr(text, i=0, in_choice=False):
-	if i >= len(text):
-		raise ParsingError.eof(text, i)
-	char = text[i]
-	if char == "(":
-		return parse_choice(text, i+1)
-	if char == "[":
-		return parse_charset(text, i+1)
-	return parse_sequence(text, i, in_choice)
 
 
 def parse_regex(text):
